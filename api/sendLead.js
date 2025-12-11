@@ -1,75 +1,80 @@
-import nodemailer from 'nodemailer';
-import multiparty from 'multiparty';
+import nodemailer from "nodemailer";
 
 export const config = {
-  api: { bodyParser: false },
+  api: {
+    bodyParser: false, // We'll use formidable for file uploads
+  },
 };
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+import formidable from "formidable";
 
-  const form = new multiparty.Form();
+export default async function handler(req, res) {
+  // Allow CORS from your Webflow site
+  res.setHeader("Access-Control-Allow-Origin", "https://growpixel.webflow.io");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end(); // Handle preflight
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Method not allowed" });
+  }
+
+  const form = formidable({ multiples: false });
+
   form.parse(req, async (err, fields, files) => {
-    if (err) return res.status(500).send(err);
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    const { name, email, mainService, subService, brief } = fields;
+    const file = files.file;
+
+    if (!name || !email || !mainService) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
+    }
 
     try {
-      const mainService = fields.mainService[0];
-      const subService = fields.subService[0];
-      const name = fields.name[0];
-      const email = fields.email[0];
-      const brief = fields.brief[0];
-      const budget = fields.budget[0];
-      const maintenance = fields.maintenance[0];
-      const hiringLikelihood = fields.hiringLikelihood[0];
-      const transcript = fields.transcript[0] || '';
-      const file = files.file ? files.file[0] : null;
-
+      // Configure NodeMailer (example using Gmail SMTP, replace with your credentials)
       const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT),
-        secure: process.env.SMTP_SECURE === 'true',
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: true,
         auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
+          user: process.env.EMAIL_USER, // Your email
+          pass: process.env.EMAIL_PASS, // Your email password / app password
         },
       });
 
-      const adminMailOptions = {
-        from: `"GrowPixel Chatbot" <${process.env.SMTP_USER}>`,
-        to: 'info@growpixel.co',
-        subject: `New Project Lead: ${mainService} → ${subService}`,
+      const mailOptions = {
+        from: `"GrowPixel Chatbot" <${process.env.EMAIL_USER}>`,
+        to: "info@growpixel.co", // Destination email
+        subject: `New Project Submission from ${name}`,
         html: `
-          <h2>New Project Lead</h2>
-          <p><b>Service:</b> ${mainService} → ${subService}</p>
-          <p><b>Name:</b> ${name}</p>
-          <p><b>Email:</b> ${email}</p>
-          <p><b>Budget:</b> ${budget}</p>
-          <p><b>Maintenance:</b> ${maintenance}</p>
-          <p><b>Hiring Likelihood:</b> ${hiringLikelihood}</p>
-          <h3>Project Brief</h3>
-          <p>${brief}</p>
-          <h3>Chat Transcript</h3>
-          <pre>${transcript}</pre>
+          <h3>New project submission</h3>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Main Service:</strong> ${mainService}</p>
+          <p><strong>Sub Service:</strong> ${subService}</p>
+          <p><strong>Brief:</strong> ${brief}</p>
         `,
-        attachments: file ? [{ filename: file.originalFilename, path: file.path }] : [],
       };
 
-      await transporter.sendMail(adminMailOptions);
+      // If a file was uploaded, attach it
+      if (file) {
+        mailOptions.attachments = [
+          {
+            filename: file.originalFilename,
+            path: file.filepath,
+          },
+        ];
+      }
 
-      const userMailOptions = {
-        from: `"GrowPixel Chatbot" <${process.env.SMTP_USER}>`,
-        to: email,
-        subject: 'Copy of your GrowPixel Chat',
-        html: `<p>Thanks for contacting GrowPixel! Here is a copy of your chat:</p><pre>${transcript}</pre>`,
-        attachments: file ? [{ filename: file.originalFilename, path: file.path }] : [],
-      };
-
-      await transporter.sendMail(userMailOptions);
-
-      res.status(200).json({ success: true, message: 'Emails sent successfully.' });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ success: false, error: e.message });
+      await transporter.sendMail(mailOptions);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("Email sending error:", error);
+      return res.status(500).json({ success: false, error: error.message });
     }
   });
 }
