@@ -4,155 +4,92 @@ import fs from "fs";
 
 export const config = {
   api: {
-    bodyParser: false, // required for file uploads
+    bodyParser: false, // Required for file uploads
   },
 };
 
-// ====== Allowed file types ======
-const ALLOWED_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword"
-];
-
 export default async function handler(req, res) {
-  // ===== CORS =====
-  res.setHeader("Access-Control-Allow-Origin", "https://growpixel.webflow.io");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
   if (req.method !== "POST") {
     return res.status(405).json({ success: false, error: "Method not allowed" });
   }
 
-  try {
-    const form = formidable({ multiples: false, keepExtensions: true });
+  const form = formidable({ multiples: false });
 
-    const { fields, files } = await new Promise((resolve, reject) => {
-      form.parse(req, (err, fields, files) => {
-        if (err) reject(err);
-        else resolve({ fields, files });
-      });
-    });
+  form.parse(req, async (err, fields, files) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
 
-    // Extract data
     const {
-      name,
-      email,
       mainService,
       subService,
-      brief,
-      businessType,
+      name,
+      email,
+      project_brief,
+      business_type,
       industry,
-      estimatedBudget,
-      ongoingMaintenance,
-      hiringLikelihood
+      estimated_budget,
+      ongoing_maintenance,
+      hiring_likelihood,
     } = fields;
 
-    let attachment = null;
-
+    let attachments = [];
     if (files.file) {
-      const uploaded = files.file;
-      if (!ALLOWED_TYPES.includes(uploaded.mimetype)) {
-        return res.status(400).json({
-          success: false,
-          error: "Invalid file type. Only PDF and Word files are allowed."
-        });
-      }
-
-      attachment = {
-        filename: uploaded.originalFilename,
-        content: fs.readFileSync(uploaded.filepath),
-      };
+      const file = files.file;
+      attachments.push({
+        filename: file.originalFilename,
+        content: fs.readFileSync(file.filepath),
+      });
     }
 
-    // ======= SMTP Transport =======
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST, // mail.privateemail.com
-      port: parseInt(process.env.SMTP_PORT || "465"),
-      secure: true,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      }
-      tls: {
-    rejectUnauthorized: false // ignore cert mismatch
-  }
-    });
+    try {
+      // Create SMTP transporter with TLS option
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || "465"),
+        secure: process.env.SMTP_SECURE === "true",
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+        tls: {
+          rejectUnauthorized: false, // ignore cert mismatch
+        },
+      });
 
-    // ============================================
-    // 1️⃣ Send email to YOU
-    // ============================================
-    await transporter.sendMail({
-      from: `"GrowPixel Lead Bot" <${process.env.EMAIL_USER}>`,
-      to: process.env.RECEIVER_EMAIL, // e.g., info@growpixel.co
-      subject: `🚀 New Lead — ${name} (${mainService} → ${subService})`,
-      html: `
-        <h2>New Project Lead from GrowPixel Chatbot</h2>
-
+      const htmlContent = `
+        <h2>New Project Submission</h2>
+        <p><b>Service:</b> ${mainService} → ${subService}</p>
         <p><b>Name:</b> ${name}</p>
         <p><b>Email:</b> ${email}</p>
-        <p><b>Service:</b> ${mainService} → ${subService}</p>
-        <p><b>Business Type:</b> ${businessType}</p>
+        <p><b>Business Type:</b> ${business_type}</p>
         <p><b>Industry:</b> ${industry}</p>
-        <p><b>Estimated Budget:</b> ${estimatedBudget}</p>
-        <p><b>Maintenance Needed:</b> ${ongoingMaintenance}</p>
-        <p><b>Hiring Likelihood:</b> ${hiringLikelihood}</p>
+        <p><b>Budget:</b> ${estimated_budget}</p>
+        <p><b>Maintenance:</b> ${ongoing_maintenance || "N/A"}</p>
+        <p><b>Hiring:</b> ${hiring_likelihood}</p>
+        <p><b>Project Brief:</b><br>${project_brief || ""}</p>
+      `;
 
-        <h3>Project Brief:</h3>
-        <div style="white-space:pre-wrap;padding:10px;border:1px solid #ddd;border-radius:8px;background:#fafafa;">
-          ${brief}
-        </div>
+      // Send email to admin
+      await transporter.sendMail({
+        from: `"GrowPixel Chatbot" <${process.env.SMTP_USER}>`,
+        to: process.env.ADMIN_EMAIL,
+        subject: `New Project Submission from ${name}`,
+        html: htmlContent,
+        attachments,
+      });
 
-        <br>
-        <p>Chatbot Submission • GrowPixel.co</p>
-      `,
-      attachments: attachment ? [attachment] : [],
-    });
+      // Send copy to user
+      await transporter.sendMail({
+        from: `"GrowPixel Chatbot" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Copy of Your Project Submission`,
+        html: `<p>Hi ${name},</p><p>Thanks for submitting your project. Here’s a copy of your submission:</p>${htmlContent}`,
+        attachments,
+      });
 
-    // ============================================
-    // 2️⃣ Send email COPY to USER
-    // ============================================
-    await transporter.sendMail({
-      from: `"GrowPixel Team" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "📄 Copy of Your Submission — GrowPixel Project Intake",
-      html: `
-        <h2>Thanks for submitting your project!</h2>
-
-        <p>Here’s a copy of your intake form.</p>
-
-        <p><b>Name:</b> ${name}</p>
-        <p><b>Email:</b> ${email}</p>
-        <p><b>Service:</b> ${mainService} → ${subService}</p>
-        <p><b>Business Type:</b> ${businessType}</p>
-        <p><b>Industry:</b> ${industry}</p>
-        <p><b>Estimated Budget:</b> ${estimatedBudget}</p>
-        <p><b>Maintenance Needed:</b> ${ongoingMaintenance}</p>
-        <p><b>Hiring Likelihood:</b> ${hiringLikelihood}</p>
-
-        <h3>Your Project Brief:</h3>
-        <div style="white-space:pre-wrap;padding:10px;border:1px solid #ddd;border-radius:8px;background:#fafafa;">
-          ${brief}
-        </div>
-
-        <br><p>Our team will reach out shortly 🚀</p>
-      `,
-      attachments: attachment ? [attachment] : [],
-    });
-
-    return res.json({ success: true });
-
-  } catch (err) {
-    console.error("EMAIL ERROR:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Server error: " + err.message,
-    });
-  }
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("Email send error:", error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
 }
-
