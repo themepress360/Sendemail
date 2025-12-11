@@ -44,6 +44,9 @@ export default async function handler(req, res) {
           user: process.env.EMAIL_USER, // Your email
           pass: process.env.EMAIL_PASS, // Your email password / app password
         },
+        tls: {
+    rejectUnauthorized: false // ignore cert mismatch
+  }
       });
 
       const mailOptions = {
